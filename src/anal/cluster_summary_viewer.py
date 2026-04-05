@@ -311,7 +311,8 @@ with st.sidebar:
         if "sel_pair_idx" not in st.session_state:
             import random
             st.session_state["sel_pair_idx"] = random.randrange(len(fp))
-        if st.session_state.get("sel_pair_idx", 0) >= len(fp):
+        _pair_idx = st.session_state.get("sel_pair_idx")
+        if not isinstance(_pair_idx, int) or _pair_idx >= len(fp):
             st.session_state["sel_pair_idx"] = 0
         sel_idx = st.selectbox(
             "ペア",
