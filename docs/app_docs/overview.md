@@ -1,6 +1,6 @@
 # 概要
 
-全国の温泉・地理ノードを衛星データから抽出した特徴量（AEF: Alpha Earth Foundation）でベクトル化し、HDBSCAN でクラスタリング。AEF 空間で類似した地形・植生・気候等のノード群を探索するビューア。
+全国の温泉・地理ノードを衛星データから抽出した特徴量（AEF: AlphaEarth Foundations）でベクトル化し、HDBSCAN でクラスタリング。AEF 空間で類似した地形・植生・気候等のノード群を探索するビューア。
 
 各ノードには標高・地形分類（国土地理院・J-SHIS）、周辺 OSM タグ、周辺 Wikipedia 要約のテキスト情報を付与。Snowflake AI_COMPLETE（claude-sonnet-4-6）でクラスタ・ペアの特徴仮説と考察を生成。
 
