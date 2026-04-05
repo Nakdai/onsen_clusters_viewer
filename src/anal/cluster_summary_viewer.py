@@ -85,8 +85,10 @@ def load_node_location() -> pd.DataFrame:
     return pd.read_csv(NODE_LOCATION_PATH)
 
 
-def render_dendrogram(highlight: dict[int, str]) -> None:
-    """系統樹を描画する（plotly）。highlight: {hdbscan_10: color}"""
+def render_dendrogram(highlight: dict[int, str], chart_key: str) -> int | None:
+    """系統樹を描画する（plotly）。highlight: {hdbscan_10: color}
+    クリックされたリーフのクラスタIDを返す（クリックなしの場合はNone）。
+    """
     Z = load_linkage()
     leaf_map = load_leaf_map().sort_values("scipy_leaf_idx")
     id_to_loc = stats_df.set_index("hdbscan_10")["location"].to_dict()
@@ -108,7 +110,7 @@ def render_dendrogram(highlight: dict[int, str]) -> None:
             hoverinfo="skip", showlegend=False,
         ))
 
-    # リーフ: ホバー点 + ラベルアノテーション
+    # リーフ: クリック可能なマーカー + ラベルアノテーション
     for i, lbl in enumerate(ddata["ivl"]):
         x = 10 * i + 5
         loc = id_to_loc.get(int(lbl), "?")
@@ -117,7 +119,8 @@ def render_dendrogram(highlight: dict[int, str]) -> None:
         fig.add_trace(go.Scatter(
             x=[x], y=[0],
             mode="markers",
-            marker=dict(size=6 if is_hl else 4, color=color),
+            marker=dict(size=10 if is_hl else 7, color=color),
+            customdata=[int(lbl)],
             hovertext=f"ID{lbl} {loc}",
             hoverinfo="text",
             showlegend=False,
@@ -144,6 +147,7 @@ def render_dendrogram(highlight: dict[int, str]) -> None:
     fig.update_layout(
         height=520,
         showlegend=False,
+        clickmode="event+select",
         xaxis=dict(showticklabels=False, showgrid=False, zeroline=False,
                    range=x_range),
         yaxis=dict(title="distance", showgrid=False, zeroline=False,
@@ -152,7 +156,19 @@ def render_dendrogram(highlight: dict[int, str]) -> None:
         plot_bgcolor="white",
         dragmode="pan",
     )
-    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
+    event = st.plotly_chart(
+        fig, use_container_width=True,
+        config={"scrollZoom": True},
+        on_select="rerun",
+        key=chart_key,
+    )
+    if event and event.selection and event.selection.points:
+        pt = event.selection.points[0]
+        cd = pt.get("customdata")
+        if cd is not None:
+            # customdata はリストで返る場合がある
+            return int(cd[0]) if isinstance(cd, (list, tuple)) else int(cd)
+    return None
 
 
 def cluster_nodes(cluster_id: int, geo: pd.DataFrame, hdb: pd.DataFrame, node_loc: pd.DataFrame) -> pd.DataFrame:
@@ -218,6 +234,31 @@ node_loc = load_node_location()
 stats_df = stats_df.copy()
 stats_df["umap_rank"] = stats_df["umap_std_mean"].rank(method="min").astype(int)
 stats_df["geo_rank"]  = stats_df["geo_std_km"].rank(method="min").astype(int)
+
+# 樹形図クリックによる遷移リクエストをウィジェット描画前に適用
+if "pending_nav_cid" in st.session_state:
+    _nav_cid = st.session_state.pop("pending_nav_cid")
+    _nav_row = cls_df[cls_df["hdbscan_10"] == _nav_cid]
+    if not _nav_row.empty:
+        st.session_state["mode"] = "クラスタ"
+        st.session_state["sel_crit_c"] = _nav_row.iloc[0]["criterion"]
+        st.session_state["sel_cid"] = _nav_cid
+
+if "pending_nav_pair_cid" in st.session_state:
+    _nav_cid = st.session_state.pop("pending_nav_pair_cid")
+    _pair_row = pair_df[
+        (pair_df["cluster_a"] == _nav_cid) | (pair_df["cluster_b"] == _nav_cid)
+    ]
+    if not _pair_row.empty:
+        _crit = _pair_row.iloc[0]["criterion"]
+        _fp = pair_df[pair_df["criterion"] == _crit].reset_index(drop=True)
+        _idx_matches = _fp[
+            (_fp["cluster_a"] == _nav_cid) | (_fp["cluster_b"] == _nav_cid)
+        ].index
+        if len(_idx_matches) > 0:
+            st.session_state["mode"] = "ペア"
+            st.session_state["sel_crit_p"] = _crit
+            st.session_state["sel_pair_idx"] = int(_idx_matches[0])
 _n_clusters = len(stats_df)
 
 feat_path          = _latest("cluster_feature_2*.csv")
@@ -236,21 +277,24 @@ with st.sidebar:
         st.markdown(OVERVIEW_PATH.read_text(encoding="utf-8"))
     st.divider()
     st.header("設定")
-    mode = st.radio("表示モード", ["クラスタ", "ペア"])
+    mode = st.radio("表示モード", ["クラスタ", "ペア"], key="mode")
     st.divider()
 
     if mode == "クラスタ":
         criteria = cls_df["criterion"].unique().tolist()
-        sel_crit = st.selectbox("基準", criteria)
+        sel_crit = st.selectbox("基準", criteria, key="sel_crit_c")
         filtered = cls_df[cls_df["criterion"] == sel_crit]
         cids = filtered["hdbscan_10"].tolist()
-        if "init_cid_idx" not in st.session_state:
+        if "sel_cid" not in st.session_state:
             import random
-            st.session_state["init_cid_idx"] = random.randrange(len(cids))
+            st.session_state["sel_cid"] = cids[random.randrange(len(cids))]
+        # sel_cid が現在の criterion に含まれない場合は先頭にリセット
+        if st.session_state.get("sel_cid") not in cids:
+            st.session_state["sel_cid"] = cids[0]
         sel_cid = st.selectbox(
             "クラスタ",
             cids,
-            index=min(st.session_state["init_cid_idx"], len(cids) - 1),
+            key="sel_cid",
             format_func=lambda x: f"ID={x}  {filtered.set_index('hdbscan_10').loc[x, 'location']}  (n={filtered.set_index('hdbscan_10').loc[x, 'count']})",
         )
         r = filtered[filtered["hdbscan_10"] == sel_cid].iloc[0]
@@ -262,16 +306,18 @@ with st.sidebar:
 
     else:
         criteria = pair_df["criterion"].unique().tolist()
-        sel_crit = st.selectbox("基準", criteria)
+        sel_crit = st.selectbox("基準", criteria, key="sel_crit_p")
         fp = pair_df[pair_df["criterion"] == sel_crit].reset_index(drop=True)
-        if "init_pair_idx" not in st.session_state:
+        if "sel_pair_idx" not in st.session_state:
             import random
-            st.session_state["init_pair_idx"] = random.randrange(len(fp))
+            st.session_state["sel_pair_idx"] = random.randrange(len(fp))
+        if st.session_state.get("sel_pair_idx", 0) >= len(fp):
+            st.session_state["sel_pair_idx"] = 0
         sel_idx = st.selectbox(
             "ペア",
             fp.index.tolist(),
-            index=min(st.session_state["init_pair_idx"], len(fp) - 1),
-            format_func=lambda i: f"{fp.loc[i,'location_a']} ↔ {fp.loc[i,'location_b']}",
+            key="sel_pair_idx",
+            format_func=lambda i: f"ID{fp.loc[i,'cluster_a']} {fp.loc[i,'location_a']} ↔ ID{fp.loc[i,'cluster_b']} {fp.loc[i,'location_b']}",
         )
         pr = fp.iloc[sel_idx]
         st.metric("cosine_distance", f"{pr['cosine_distance']:.4f}")
@@ -306,7 +352,11 @@ if mode == "クラスタ":
             st.warning("cluster_feature_hionsen が見つかりません")
 
     with st.expander("系統樹"):
-        render_dendrogram({sel_cid: COLOR_A})
+        st.caption("リーフの点をクリックするとそのクラスタに遷移します。")
+        clicked = render_dendrogram({sel_cid: COLOR_A}, chart_key="dendro_cluster")
+        if clicked is not None and clicked != sel_cid:
+            st.session_state["pending_nav_cid"] = clicked
+            st.rerun()
 
     with st.expander("手法詳細"):
         st.markdown(APPENDIX_PATH.read_text(encoding="utf-8"))
@@ -365,7 +415,11 @@ else:
                 st.warning("cluster_feature_hionsen が見つかりません")
 
     with st.expander("系統樹"):
-        render_dendrogram({cid_a: COLOR_A, cid_b: COLOR_B})
+        st.caption("リーフの点をクリックするとそのペアに遷移します。")
+        clicked = render_dendrogram({cid_a: COLOR_A, cid_b: COLOR_B}, chart_key="dendro_pair")
+        if clicked is not None:
+            st.session_state["pending_nav_pair_cid"] = clicked
+            st.rerun()
 
     with st.expander("手法詳細"):
         st.markdown(APPENDIX_PATH.read_text(encoding="utf-8"))
