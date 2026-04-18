@@ -20,6 +20,7 @@ DATA_DIR = Path("data/gee_results/all_node_5")
 APPENDIX_PATH = Path("docs/app_docs/appendix.md")
 OVERVIEW_PATH = Path("docs/app_docs/overview.md")
 LEGEND_PATH  = Path("docs/app_docs/legend.md")
+CREDITS_PATH = Path("docs/app_docs/datacredits.md")
 UMAP_PATH = DATA_DIR / "umap_10d.parquet"
 HDBSCAN_PATH = DATA_DIR / "hdbscan_mcs10.parquet"
 CLUSTERS_PATH = DATA_DIR / "micro_clusters.csv"
@@ -329,6 +330,8 @@ with st.sidebar:
     st.divider()
     with st.expander("凡例"):
         st.markdown(LEGEND_PATH.read_text(encoding="utf-8"))
+    with st.expander("出典 / Data Credits"):
+        st.markdown(CREDITS_PATH.read_text(encoding="utf-8"))
 
 # ── メインコンテンツ ──────────────────────────────────────────────────────────
 if mode == "クラスタ":
